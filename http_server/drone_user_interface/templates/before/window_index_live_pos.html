@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>로봇 GPS 실시간 추적</title>
+    <style>
+        #map {
+            height: 400px;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <h1>실시간 지도</h1>
+    <div id="map"></div>
+    <div id="image-container">
+        <img id="point-image" src="" alt="포인트 이미지">
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+
+    <script>
+        const socket = io();
+
+        // Leaflet 맵 생성
+        const map = L.map('map').setView([36.625064, 127.458123], 13); // 초기 위치
+
+        // 타일 레이어 추가
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        }).addTo(map);
+
+        var markers=[];
+
+        // 클릭 시 이벤트 핸들러
+        map.on('click', function(e) {
+            var latLng = e.latlng;
+            socket.emit('add_point', { lat: latLng.lat, lng: latLng.lng });
+        });
+
+        // 새로운 포인트 생성시 이벤트 핸들러
+        socket.on('new_point', function(point) {
+            var marker = L.marker([point.lat, point.lng]).addTo(map);
+            marker.bindPopup(`
+                <div>
+                    ${point.lat}, ${point.lng} <br/>
+                    <button class="delete-btn" data-index="${point.index}">삭제</button>
+                </div>
+            `);
+            marker.on('click', function() {
+                requestAndDisplayImage(point.index);
+            });
+            markers[point.index] = marker;
+        });
+
+        socket.on('all_points', function(points) {
+            points.forEach(function(point) {
+                var marker = L.marker([point.lat, point.lng]).addTo(map);
+                marker.bindPopup(`
+                    <div>
+                        ${point.lat}, ${point.lng} <br/>
+                        <button class="delete-btn" data-index="${point.index}">삭제</button>
+                    </div>
+                `);
+                marker.on('click', function() {
+                    requestAndDisplayImage(point.index);
+                });
+                markers[point.index] = marker;
+            });
+        });
+
+        socket.on('delete_point', function(index) {
+            index = parseInt(index);
+            if (markers[index]) {
+                map.removeLayer(markers[index]);
+                delete markers[index];
+            }
+        });
+
+        //socket.on('receive_image', function(data) {
+        //    var imageElement = document.getElementById('point-image');
+        //    var imageNameElement = document.getElementById('image-name');
+        //    var blob = new Blob([new Uint8Array(data.image_data)], { type: 'image/jpeg' });
+        //    var url = URL.createObjectURL(blob);
+        //    imageElement.src = url;
+        //    imageNameElement.textContent=data.image_name;
+        //   
+        //});
+
+        socket.on('receive_image', function(data) {
+            var blob = new Blob([new Uint8Array(data.image_data)], { type: 'image/jpeg' });
+            var url = URL.createObjectURL(blob);
+            openImageInNewWindow(url, data.image_name);
+        });
+
+        function requestAndDisplayImage(index) {
+            socket.emit('existing_point_clicked', {index: index});
+        }
+
+        document.addEventListener('click', function(event) {
+            if (event.target.classList.contains('delete-btn')) {
+                var index = event.target.getAttribute('data-index');
+                socket.emit('delete_point', index);
+            }
+        });
+
+        // GPS 데이터를 받았을 때 실행되는 이벤트 핸들러
+        socket.on('drone_pos', (data) => {
+            console.log('새로운 GPS 데이터:', data);
+            if (robotMarker){
+                map.removeLayer(robotMarker);
+            }
+            updateMap(data);
+        });
+        var robotMarker;
+        var redDotIcon = L.icon({
+            iconUrl: 'https://upload.wikimedia.org/wikipedia/commons/0/0e/Basic_red_dot.png',
+            iconSize: [16, 16], // size of the icon
+            iconAnchor: [8, 8], // point of the icon which will correspond to marker's location
+            popupAnchor: [0, -8] // point from which the popup should open relative to the iconAnchor
+        });
+
+        // 맵 업데이트 함수
+        function updateMap(data) {
+            const { latitude, longitude } = data;
+            //map.setView([latitude, longitude], 13); // 마커가 움직이는 위치로 맵 이동
+            //marker.setLatLng([latitude, longitude]); // 마커 위치 업데이트
+            robotMarker = L.marker([latitude, longitude], {icon: redDotIcon}).addTo(map);
+        }
+
+        function openImageInNewWindow(url, imageName) {
+            var newWindow = window.open("", "_blank");
+            newWindow.document.write(`
+                <html>
+                    <head>
+                        <title>${imageName}</title>
+                    </head>
+                    <body>
+                        <img src="${url}" alt="${imageName}" />
+                    </body>
+                </html>
+            `);
+            newWindow.document.close();
+        }
+    </script>
+</body>
+</html>
